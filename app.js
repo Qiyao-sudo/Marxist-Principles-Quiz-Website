@@ -14,11 +14,11 @@ function setQuestions(arr){
 var STORAGE_KEY = "mayuan_quiz_v1";
 
 /* ---------- 登录 / Supabase 进度同步 ---------- */
-var USER_STORAGE = "mayuan_user_v1"; // sessionStorage：当前登录学号（仅本标签页）
+var USER_STORAGE = "mayuan_user_v1"; // localStorage：当前登录学号（跨浏览器重启保留，退出登录时清除）
 var currentUser = null;              // { xh, name } 或 null
 
 /* ---------- 题库解密（AES-256-GCM，密钥来自 .key 文件） ---------- */
-var KEY_STORAGE = "mayuan_key_v1"; // sessionStorage 槽：缓存原始密钥字节（仅本标签页）
+var KEY_STORAGE = "mayuan_key_v1"; // localStorage 槽：缓存原始密钥字节（跨浏览器重启保留，免重复输入）
 
 function b64ToBytes(b64){
   var bin = atob(b64);
@@ -195,7 +195,7 @@ function home(){
       if(ok){
         syncProgress();                              // 先把当前进度上传云端
         STATE=defaultState(); saveState();           // 再清除本机数据
-        currentUser=null; sessionStorage.removeItem(USER_STORAGE);
+        currentUser=null; localStorage.removeItem(USER_STORAGE);
         showLogin();
       }
     });
@@ -570,7 +570,7 @@ function tryUnlock(rawB64){
   return importKeyFromBytes(rawBytes)
     .then(function(keyObj){ return decryptQuestions(keyObj); })
     .then(function(questions){
-      sessionStorage.setItem(KEY_STORAGE, trimmed); // 缓存密钥，本标签页刷新免重输
+      localStorage.setItem(KEY_STORAGE, trimmed); // 缓存密钥，浏览器重启免重输
       setQuestions(questions);
       enterApp();
       return true;
@@ -607,7 +607,7 @@ function syncFromDB(xh){
 }
 
 function enterApp(){
-  var cached = sessionStorage.getItem(USER_STORAGE);
+  var cached = localStorage.getItem(USER_STORAGE);
   if (cached){
     currentUser = { xh: cached, name: "" };
     syncFromDB(cached).then(home).catch(function(){ home(); });
@@ -657,7 +657,7 @@ function attemptLogin(xh){
 
 function finishLogin(user){
   currentUser = user;
-  sessionStorage.setItem(USER_STORAGE, user.xh);
+  localStorage.setItem(USER_STORAGE, user.xh);
   syncFromDB(user.xh).then(home).catch(function(){ home(); });
 }
 
@@ -722,14 +722,14 @@ function init(){
     updateFoot();
     return;
   }
-  // 同标签页刷新：用缓存的密钥字节静默解锁
-  var cached = sessionStorage.getItem(KEY_STORAGE);
+  // 浏览器重启/刷新：用缓存的密钥字节静默解锁
+  var cached = localStorage.getItem(KEY_STORAGE);
   if (cached){
     importKeyFromBytes(b64ToBytes(cached))
       .then(function(keyObj){ return decryptQuestions(keyObj); })
       .then(function(questions){ setQuestions(questions); enterApp(); })
       .catch(function(){
-        sessionStorage.removeItem(KEY_STORAGE);
+        localStorage.removeItem(KEY_STORAGE);
         showKeyGate("缓存的密钥已失效，请重新选择 mayuan.key。");
       });
     return;
