@@ -737,7 +737,24 @@ function init(){
   showKeyGate();
 }
 
+/* ---------- 数据加载：优先远端存储桶，失败回退本地 data.js ---------- */
+var REMOTE_DATA_URL = "https://quiz-1312685057.cos.ap-nanjing.myqcloud.com/data.js";
+
+function bootstrap(){
+  // index.html 已同步加载本地 data.js（兜底基线，window.QUIZ_CIPHER 已就绪）。
+  // 再注入远端 <script> 覆盖拿最新数据；失败则沿用本地。
+  app.innerHTML = '<div class="card" style="max-width:420px;margin:60px auto;text-align:center;color:var(--ink-soft)">加载题库中…</div>';
+  var s = document.createElement("script");
+  s.src = REMOTE_DATA_URL;
+  s.onload = function(){ init(); };              // 远端已执行，覆盖了 window.QUIZ_CIPHER
+  s.onerror = function(){                        // 远端不可达：移除节点，沿用本地 data.js
+    if(s.parentNode) s.parentNode.removeChild(s);
+    init();
+  };
+  document.head.appendChild(s);
+}
+
 /* ---------- 启动 ---------- */
-init();
+bootstrap();
 
 })();
