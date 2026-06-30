@@ -191,8 +191,13 @@ function home(){
   // 绑定
   var lb=$("#logoutBtn");
   if(lb) lb.addEventListener("click",function(){
-    confirmDialog("退出登录","将退出当前账号（不影响已上传的进度）。确定吗？","退出").then(function(ok){
-      if(ok){ syncProgress(); currentUser=null; sessionStorage.removeItem(USER_STORAGE); showLogin(); }
+    confirmDialog("退出登录","将上传当前进度到云端，并清除本机数据。确定退出吗？","退出").then(function(ok){
+      if(ok){
+        syncProgress();                              // 先把当前进度上传云端
+        STATE=defaultState(); saveState();           // 再清除本机数据
+        currentUser=null; sessionStorage.removeItem(USER_STORAGE);
+        showLogin();
+      }
     });
   });
   $$(".mode-btn").forEach(function(b){
@@ -484,16 +489,6 @@ document.getElementById("homeBtn").addEventListener("click",function(){
   syncProgress();
   if(!currentUser){ showLogin(); return; } // 登录态前点标题：回登录页，不绕过登录
   home();
-});
-document.getElementById("resetBtn").addEventListener("click",function(){
-  confirmDialog("重置全部进度","将清空所有答题记录、错题本与进度，且不可恢复。确定吗？","重置").then(function(ok){
-    if(ok){
-      STATE=defaultState();
-      saveState();
-      syncProgress(); // 同步清空态，避免下次登录被远程旧数据复活
-      home();
-    }
-  });
 });
 
 /* 键盘：← 上一题，→ 下一题（仅在答题页生效；避开 Enter 以防按钮聚焦时双触发） */
