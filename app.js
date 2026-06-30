@@ -502,46 +502,62 @@ function showKeyGate(msg){
   app.innerHTML =
     '<div class="card key-gate">'+
       '<div class="key-icon">🔑</div>'+
-      '<h2>需要密钥文件</h2>'+
-      '<p class="sub">'+escapeHtml(msg||'本题库已加密，请选择本地的 mayuan.key 文件以解锁。')+'</p>'+
-      '<input type="file" id="keyInput" accept=".key">'+
+      '<h2>需要密钥</h2>'+
+      '<p class="sub">'+escapeHtml(msg||'本题库已加密。请选择 mayuan.key 文件，或直接粘贴密钥以解锁。')+'</p>'+
+      '<input type="file" id="keyInput" accept=".key" class="key-file">'+
+      '<div class="key-divider">— 或粘贴密钥 —</div>'+
+      '<div class="key-paste">'+
+        '<input type="text" id="keyText" placeholder="粘贴 base64 密钥…" autocomplete="off" spellcheck="false">'+
+        '<button class="btn" id="keyUnlock">解锁</button>'+
+      '</div>'+
       '<p id="keyErr" class="key-err"></p>'+
-      '<p class="sub" style="font-size:12px;margin-top:14px">提示：请通过 https 或 localhost 访问；密钥文件请妥善保管，勿上传分享。</p>'+
+      '<p class="sub" style="font-size:12px;margin-top:14px">提示：请通过 https 或 localhost 访问；密钥请妥善保管，勿上传分享。</p>'+
     '</div>';
   updateFoot();
   document.getElementById("keyInput").addEventListener("change", onKeyPicked);
+  var txt = document.getElementById("keyText");
+  var unlock = function(){ tryUnlock(txt.value).then(function(ok){ if(!ok) txt.select(); }); };
+  document.getElementById("keyUnlock").addEventListener("click", unlock);
+  txt.addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); unlock(); } });
+  txt.focus();
+}
+
+// 用一段 base64 密钥尝试解密并进入首页；成功 resolve(true)，失败 resolve(false) 并在 #keyErr 报错
+function tryUnlock(rawB64){
+  var errEl = document.getElementById("keyErr");
+  if (errEl) errEl.textContent = "正在验证…";
+  var trimmed = String(rawB64==null?"":rawB64).trim();
+  var rawBytes;
+  try {
+    rawBytes = b64ToBytes(trimmed);
+    if (rawBytes.length !== 32) throw new Error("密钥长度不对（需要 32 字节）。");
+  } catch (err){
+    if (errEl) errEl.textContent = "密钥无效：" + (err && err.message ? err.message : err);
+    return Promise.resolve(false);
+  }
+  return importKeyFromBytes(rawBytes)
+    .then(function(keyObj){ return decryptQuestions(keyObj); })
+    .then(function(questions){
+      sessionStorage.setItem(KEY_STORAGE, trimmed); // 缓存密钥，本标签页刷新免重输
+      setQuestions(questions);
+      home();
+      return true;
+    })
+    .catch(function(err){
+      if (errEl) errEl.textContent = "解密失败：密钥可能不正确。" + (err && err.message ? "（" + err.message + "）" : "");
+      return false;
+    });
 }
 
 function onKeyPicked(e){
   var file = e.target.files && e.target.files[0];
   if (!file) return;
+  var input = e.target;
   var errEl = document.getElementById("keyErr");
-  errEl.textContent = "正在验证…";
+  if (errEl) errEl.textContent = "正在验证…";
   var reader = new FileReader();
-  reader.onload = function(){
-    var rawB64 = String(reader.result).trim();
-    var rawBytes;
-    try {
-      rawBytes = b64ToBytes(rawB64);
-      if (rawBytes.length !== 32) throw new Error("密钥长度不对（需要 32 字节）。");
-    } catch (err){
-      errEl.textContent = "密钥文件无效：" + (err && err.message ? err.message : err);
-      e.target.value = "";
-      return;
-    }
-    importKeyFromBytes(rawBytes)
-      .then(function(keyObj){ return decryptQuestions(keyObj); })
-      .then(function(questions){
-        sessionStorage.setItem(KEY_STORAGE, rawB64); // 缓存密钥字节，本标签页刷新免重选
-        setQuestions(questions);
-        home();
-      })
-      .catch(function(err){
-        errEl.textContent = "解密失败：密钥文件可能不正确。" + (err && err.message ? "（" + err.message + "）" : "");
-        e.target.value = ""; // 允许重选同名文件
-      });
-  };
-  reader.onerror = function(){ errEl.textContent = "读取文件失败。"; };
+  reader.onload = function(){ tryUnlock(reader.result).then(function(ok){ if(!ok) input.value=""; }); };
+  reader.onerror = function(){ if (errEl) errEl.textContent = "读取文件失败。"; };
   reader.readAsText(file); // .key 是 base64 文本
 }
 

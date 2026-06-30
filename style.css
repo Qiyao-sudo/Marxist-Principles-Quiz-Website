@@ -296,6 +296,11 @@ main::before{
 .key-gate h2{font-size:20px;font-weight:900;margin:0 0 8px}
 .key-gate .sub{color:var(--ink-soft);font-size:14px;margin:0 0 4px;line-height:1.6}
 .key-gate input[type=file]{margin:18px 0 6px;font-size:13px}
+.key-gate .key-divider{display:flex;align-items:center;gap:10px;color:var(--ink-soft);font-size:12px;margin:14px 0 10px}
+.key-gate .key-divider::before,.key-gate .key-divider::after{content:"";flex:1;height:1px;background:var(--rule)}
+.key-gate .key-paste{display:flex;gap:8px;justify-content:center}
+.key-gate .key-paste input[type=text]{flex:1;min-width:0;padding:9px 11px;font-size:13px;font-family:var(--mono);border:1.5px solid var(--ink);background:var(--paper)}
+.key-gate .key-paste input[type=text]:focus{outline:none;border-color:var(--red)}
 .key-gate .key-err{color:var(--red);min-height:20px;font-size:13px;margin:4px 0 0;font-weight:600}
 .key-gate code{font-family:var(--mono);background:var(--paper);padding:1px 5px;border:1px solid var(--rule)}
 
