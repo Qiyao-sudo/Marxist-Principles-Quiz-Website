@@ -490,6 +490,23 @@ document.getElementById("homeBtn").addEventListener("click",function(){
   if(!currentUser){ showLogin(); return; } // 登录态前点标题：回登录页，不绕过登录
   home();
 });
+document.getElementById("resetBtn").addEventListener("click",function(){
+  if(!currentUser) return; // 仅登录后可用
+  confirmDialog("重置全部进度","将清空本机所有答题记录、错题本与进度（云端进度也会被清空态覆盖），且不可恢复。确定吗？","重置").then(function(ok){
+    if(ok){
+      STATE=defaultState();
+      saveState();
+      syncProgress(); // 同步清空态，避免下次登录被远程旧数据复活
+      home();
+    }
+  });
+});
+
+// 根据登录态显示/隐藏顶栏「重置进度」按钮（仅登录后可用）
+function toggleResetBtn(){
+  var r=document.getElementById("resetBtn");
+  if(r) r.style.display = currentUser ? "" : "none";
+}
 
 /* 键盘：← 上一题，→ 下一题（仅在答题页生效；避开 Enter 以防按钮聚焦时双触发） */
 document.addEventListener("keydown",function(e){
@@ -505,6 +522,7 @@ document.addEventListener("keydown",function(e){
 function updateFoot(){
   var a=Object.keys(STATE.answered).length;
   document.getElementById("footStat").textContent="已答 "+a+" / "+ALL.length+"　·　错题本 "+Object.keys(STATE.wrongSet).length+" 题";
+  toggleResetBtn(); // 仅登录后显示「重置进度」
 }
 
 /* ---------- 小工具选择器 ---------- */
