@@ -303,6 +303,8 @@ main::before{
 .key-gate .key-paste input[type=text]:focus{outline:none;border-color:var(--red)}
 .key-gate .key-err{color:var(--red);min-height:20px;font-size:13px;margin:4px 0 0;font-weight:600}
 .key-gate code{font-family:var(--mono);background:var(--paper);padding:1px 5px;border:1px solid var(--rule)}
+.home-hero .user-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.home-hero .user-chip{font-size:13px;color:var(--ink-soft);font-weight:600}
 
 /* ==================== 完成页 / 印章 ==================== */
 .done-card{text-align:center;padding:30px 20px}

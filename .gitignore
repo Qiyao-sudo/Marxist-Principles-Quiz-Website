@@ -1,3 +1,5 @@
 questions/
 _dump/
 *.key
+user
+supabase_setup.sql

@@ -13,6 +13,10 @@ function setQuestions(arr){
 
 var STORAGE_KEY = "mayuan_quiz_v1";
 
+/* ---------- 登录 / Supabase 进度同步 ---------- */
+var USER_STORAGE = "mayuan_user_v1"; // sessionStorage：当前登录学号（仅本标签页）
+var currentUser = null;              // { xh, name } 或 null
+
 /* ---------- 题库解密（AES-256-GCM，密钥来自 .key 文件） ---------- */
 var KEY_STORAGE = "mayuan_key_v1"; // sessionStorage 槽：缓存原始密钥字节（仅本标签页）
 
@@ -153,6 +157,10 @@ function home(){
 
   app.innerHTML =
     '<div class="card home-hero">'+
+      '<div class="user-bar">'+
+        '<span class="user-chip">👤 '+(currentUser&&currentUser.name?escapeHtml(currentUser.name):escapeHtml(currentUser?currentUser.xh||'':''))+(currentUser&&currentUser.xh&&!currentUser.name?' · '+escapeHtml(currentUser.xh):'')+'</span>'+
+        '<button class="btn ghost small" id="logoutBtn">退出登录</button>'+
+      '</div>'+
       '<span class="eyebrow">题库 · 答题训练</span>'+
       '<h1>马克思主义基本原理</h1>'+
       '<p class="sub">共 '+ALL.length+' 道题（单选 + 多选），含答案与解析。红笔判分，进度自动保存于本设备。</p>'+
@@ -181,6 +189,12 @@ function home(){
     '</div>';
 
   // 绑定
+  var lb=$("#logoutBtn");
+  if(lb) lb.addEventListener("click",function(){
+    confirmDialog("退出登录","将退出当前账号（不影响已上传的进度）。确定吗？","退出").then(function(ok){
+      if(ok){ syncProgress(); currentUser=null; sessionStorage.removeItem(USER_STORAGE); showLogin(); }
+    });
+  });
   $$(".mode-btn").forEach(function(b){
     b.addEventListener("click",function(){ onMode(b.dataset.mode); });
   });
@@ -280,7 +294,7 @@ function renderQuestion(){
   $("#nextBtn").addEventListener("click",nextQuestion);
   $("#prevBtn").addEventListener("click",prevQuestion);
   $("#exitBtn").addEventListener("click",function(){
-    confirmDialog("退出答题","确定要退出当前答题吗？进度已自动保存。","退出").then(function(ok){ if(ok) home(); });
+    confirmDialog("退出答题","确定要退出当前答题吗？进度已自动保存。","退出").then(function(ok){ if(ok){ syncProgress(); home(); } });
   });
   var rb=$("#reshufBtn");
   if(rb) rb.addEventListener("click",function(){
@@ -389,7 +403,7 @@ function doneScreen(){
       '</div>'+
     '</div>';
   var ab=$("#againBtn"); if(ab) ab.addEventListener("click",function(){ startSession("wrong",Object.keys(STATE.wrongSet).slice(),"错题练习"); });
-  $("#homeBtn2").addEventListener("click",home);
+  $("#homeBtn2").addEventListener("click",function(){ syncProgress(); home(); });
   updateFoot();
 }
 
@@ -466,12 +480,17 @@ function review(){
 }
 
 /* ---------- 顶部按钮 ---------- */
-document.getElementById("homeBtn").addEventListener("click",home);
+document.getElementById("homeBtn").addEventListener("click",function(){
+  syncProgress();
+  if(!currentUser){ showLogin(); return; } // 登录态前点标题：回登录页，不绕过登录
+  home();
+});
 document.getElementById("resetBtn").addEventListener("click",function(){
   confirmDialog("重置全部进度","将清空所有答题记录、错题本与进度，且不可恢复。确定吗？","重置").then(function(ok){
     if(ok){
       STATE=defaultState();
       saveState();
+      syncProgress(); // 同步清空态，避免下次登录被远程旧数据复活
       home();
     }
   });
@@ -540,7 +559,7 @@ function tryUnlock(rawB64){
     .then(function(questions){
       sessionStorage.setItem(KEY_STORAGE, trimmed); // 缓存密钥，本标签页刷新免重输
       setQuestions(questions);
-      home();
+      enterApp();
       return true;
     })
     .catch(function(err){
@@ -561,11 +580,110 @@ function onKeyPicked(e){
   reader.readAsText(file); // .key 是 base64 文本
 }
 
+/* ---------- 登录门控：解密成功后、进首页前 ---------- */
+function enterApp(){
+  var cached = sessionStorage.getItem(USER_STORAGE);
+  if (cached){
+    currentUser = { xh: cached, name: "" };
+    loadAndMergeRemoteProgress(cached).then(home).catch(function(){ home(); });
+    return;
+  }
+  showLogin();
+}
+
+function showLogin(errMsg){
+  app.innerHTML =
+    '<div class="card key-gate">'+
+      '<div class="key-icon">👤</div>'+
+      '<h2>登录</h2>'+
+      '<p class="sub">请输入学号，登录后可同步答题进度。</p>'+
+      '<div class="key-paste">'+
+        '<input type="text" id="loginXh" placeholder="学号" autocomplete="off" inputmode="numeric" spellcheck="false">'+
+        '<button class="btn" id="loginGo">登录</button>'+
+      '</div>'+
+      '<p id="loginErr" class="key-err"></p>'+
+    '</div>';
+  updateFoot();
+  if (errMsg){ document.getElementById("loginErr").textContent = errMsg; }
+  var xhInput = document.getElementById("loginXh");
+  xhInput.focus();
+  var go = function(){ attemptLogin(xhInput.value); };
+  document.getElementById("loginGo").addEventListener("click", go);
+  xhInput.addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); go(); } });
+}
+
+function attemptLogin(xh){
+  xh = String(xh==null?"":xh).trim();
+  var errEl = document.getElementById("loginErr");
+  if(!/^\d{6,}$/.test(xh)){ if(errEl) errEl.textContent = "学号格式不正确。"; return; }
+  if(errEl) errEl.textContent = "验证中…";
+  window.sb.from("students").select("xh,name").eq("xh", xh).limit(1)
+    .then(function(res){
+      if(res.error){ if(errEl) errEl.textContent = "网络错误：" + res.error.message; return; }
+      if(!res.data || !res.data.length){ if(errEl) errEl.textContent = "学号未注册，请检查后重试。"; return; }
+      finishLogin({ xh: xh, name: res.data[0].name || "" });
+    })
+    .catch(function(){
+      // 离线/Supabase 不可达：降级进入（离线模式，本次不同步）
+      if(errEl) errEl.textContent = "无法连接服务器，已进入离线模式（本次不同步进度）。";
+      finishLogin({ xh: xh, name: "" });
+    });
+}
+
+function finishLogin(user){
+  currentUser = user;
+  sessionStorage.setItem(USER_STORAGE, user.xh);
+  loadAndMergeRemoteProgress(user.xh).then(home).catch(function(){ home(); });
+}
+
+/* ---------- 进度同步 ---------- */
+// 把远程进度合并进本地 STATE（answered 按 t 取新、wrongSet 并集、seqCursor 取大、shuf 保留本地）
+function mergeStates(local, remote){
+  var out = defaultState();
+  var a = (local && local.answered) || {}, ra = (remote && remote.answered) || {};
+  var w = (local && local.wrongSet) || {}, rw = (remote && remote.wrongSet) || {};
+  var ids = {};
+  Object.keys(a).forEach(function(k){ ids[k]=1; });
+  Object.keys(ra).forEach(function(k){ ids[k]=1; });
+  for(var id in ids){
+    var A = a[id], B = ra[id];
+    if(!A) out.answered[id] = B;
+    else if(!B) out.answered[id] = A;
+    else out.answered[id] = (B.t||0) > (A.t||0) ? B : A;
+  }
+  for(var k in w) out.wrongSet[k] = true;
+  for(var kk in rw){ if(!(kk in out.wrongSet)) out.wrongSet[kk] = true; }
+  // 清理：已答对的题不应留在错题本
+  for(var id2 in out.answered){ if(out.answered[id2].correct) delete out.wrongSet[id2]; }
+  out.seqCursor = Math.max((local && local.seqCursor)||0, (remote && remote.seqCursor)||0);
+  out.shuf = (local && local.shuf && local.shuf.order) ? { order: local.shuf.order.slice(), idx: local.shuf.idx||0 } : null;
+  return out;
+}
+
+function loadAndMergeRemoteProgress(xh){
+  return window.sb.from("progress").select("state").eq("xh", xh).limit(1)
+    .then(function(res){
+      if(res.error || !res.data || !res.data.length) return;
+      var remote = res.data[0].state;
+      if(!remote || typeof remote !== "object") return;
+      STATE = mergeStates(STATE, remote);
+      saveState();
+    })
+    .catch(function(){ /* 离线：忽略 */ });
+}
+
+function syncProgress(){
+  if(!currentUser || !currentUser.xh) return;
+  window.sb.from("progress").upsert({ xh: currentUser.xh, state: STATE }, { onConflict: "xh" })
+    .then(function(){ /* ok */ })
+    .catch(function(){ /* 静默；离线时下次退出会重试 */ });
+}
+
 function init(){
   // 旧版明文兼容：data.js 仍直接给出 window.QUESTIONS 时直接用
   if (Object.prototype.hasOwnProperty.call(window, "QUESTIONS") && window.QUESTIONS){
     setQuestions(window.QUESTIONS);
-    home();
+    enterApp();
     return;
   }
   // 安全上下文守卫：file:// 或非 localhost 的 http:// 下 crypto.subtle 不可用
@@ -584,7 +702,7 @@ function init(){
   if (cached){
     importKeyFromBytes(b64ToBytes(cached))
       .then(function(keyObj){ return decryptQuestions(keyObj); })
-      .then(function(questions){ setQuestions(questions); home(); })
+      .then(function(questions){ setQuestions(questions); enterApp(); })
       .catch(function(){
         sessionStorage.removeItem(KEY_STORAGE);
         showKeyGate("缓存的密钥已失效，请重新选择 mayuan.key。");
