@@ -581,11 +581,23 @@ function onKeyPicked(e){
 }
 
 /* ---------- 登录门控：解密成功后、进首页前 ---------- */
+// 每次进入页面：从数据库同步姓名 + 进度（合并）。任一失败均不阻塞进首页。
+function syncFromDB(xh){
+  var nameP = window.sb.from("students").select("name").eq("xh", xh).limit(1)
+    .then(function(res){
+      if(currentUser && currentUser.xh===xh && res && res.data && res.data.length && res.data[0].name){
+        currentUser.name = res.data[0].name; // 刷新后回填姓名
+      }
+    })
+    .catch(function(){ /* 离线：保留缓存 */ });
+  return Promise.all([nameP, loadAndMergeRemoteProgress(xh)]);
+}
+
 function enterApp(){
   var cached = sessionStorage.getItem(USER_STORAGE);
   if (cached){
     currentUser = { xh: cached, name: "" };
-    loadAndMergeRemoteProgress(cached).then(home).catch(function(){ home(); });
+    syncFromDB(cached).then(home).catch(function(){ home(); });
     return;
   }
   showLogin();
@@ -633,7 +645,7 @@ function attemptLogin(xh){
 function finishLogin(user){
   currentUser = user;
   sessionStorage.setItem(USER_STORAGE, user.xh);
-  loadAndMergeRemoteProgress(user.xh).then(home).catch(function(){ home(); });
+  syncFromDB(user.xh).then(home).catch(function(){ home(); });
 }
 
 /* ---------- 进度同步 ---------- */

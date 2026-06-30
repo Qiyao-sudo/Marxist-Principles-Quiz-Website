@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="马克思主义基本原理答题">
+  <title>马原答题</title>
+  <!-- 题卡：纸色底 + 墨色边 -->
+  <rect x="3" y="3" width="58" height="58" rx="11" fill="#ECE4D2" stroke="#1C1714" stroke-width="3"/>
+  <!-- 红「马」 -->
+  <text x="32" y="30" text-anchor="middle" dominant-baseline="central"
+        font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC','Source Han Sans SC',sans-serif"
+        font-size="40" font-weight="900" fill="#C8202B">马</text>
+  <!-- 红笔判分一笔 -->
+  <path d="M15 50 Q32 55 49 47" stroke="#9E1B24" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+</svg>
