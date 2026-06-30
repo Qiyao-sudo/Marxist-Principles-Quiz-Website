@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>马克思主义基本原理 · 答题系统</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button id="homeBtn" class="topbar-title" title="返回首页">
+    <span class="logo">★</span>
+    <span>马克思主义基本原理 · 答题训练<span class="kicker">理论 · 题库 · 红笔批改</span></span>
+  </button>
+  <div class="topbar-right">
+    <button id="resetBtn" class="btn ghost small" title="清空全部进度">重置进度</button>
+  </div>
+</header>
+
+<main id="app"><!-- 由 app.js 渲染 --></main>
+
+<footer class="footer">
+  <span id="footStat">—</span>
+</footer>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <h3 id="modalTitle">提示</h3>
+    <p id="modalBody"></p>
+    <div class="modal-actions">
+      <button id="modalCancel" class="btn ghost">取消</button>
+      <button id="modalOk" class="btn danger">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
