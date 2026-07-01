@@ -19,6 +19,8 @@ var STORAGE_KEY = "mayuan_quiz_v1";
    进度表 progress(user_id) 由 RLS 绑定 auth.uid()，每账号只能读写自己的行。
 */
 var currentUser = null;              // { id, xh, name } 或 null（id=auth.users 的 uuid）
+var DEFAULT_PWD = "Marx2026";        // 统一初始口令；用此口令登录强制改密
+var MUST_CHANGE_KEY = "mayuan_must_change_pwd"; // localStorage：首次登录未改密的待办标志
 
 /* ---------- 题库解密（AES-256-GCM，密钥托管在数据库 quiz_key 表） ---------- */
 var KEY_STORAGE = "mayuan_key_v1"; // 离线兜底缓存：在线取到密钥后存此，断网时复用；退出登录时清除
@@ -162,7 +164,10 @@ function home(){
     '<div class="card home-hero">'+
       '<div class="user-bar">'+
         '<span class="user-chip">👤 '+(currentUser&&currentUser.name?escapeHtml(currentUser.name):escapeHtml(currentUser?currentUser.xh||'':''))+(currentUser&&currentUser.xh&&!currentUser.name?' · '+escapeHtml(currentUser.xh):'')+'</span>'+
-        '<button class="btn ghost small" id="logoutBtn">退出登录</button>'+
+        '<span class="user-actions">'+
+          '<button class="btn ghost small" id="changePwdBtn">修改密码</button>'+
+          '<button class="btn ghost small" id="logoutBtn">退出登录</button>'+
+        '</span>'+
       '</div>'+
       '<span class="eyebrow">题库 · 答题训练</span>'+
       '<h1>马克思主义基本原理</h1>'+
@@ -192,6 +197,8 @@ function home(){
     '</div>';
 
   // 绑定
+  var cp=$("#changePwdBtn");
+  if(cp) cp.addEventListener("click", function(){ showChangePassword(false); });
   var lb=$("#logoutBtn");
   if(lb) lb.addEventListener("click",function(){
     confirmDialog("退出登录","将上传当前进度到云端，并清除本机数据。确定退出吗？","退出").then(function(ok){
@@ -201,6 +208,7 @@ function home(){
         var prevId = currentUser && currentUser.id;
         currentUser=null;
         localStorage.removeItem(KEY_STORAGE);        // 清除离线密钥缓存，下次登录重新从库取
+        localStorage.removeItem(MUST_CHANGE_KEY);    // 清除改密待办（退出即丢弃会话）
         // 注销 Auth 会话（清除本地持久化的 token）；离线无会话则直接回登录页
         if(prevId && window.sb && window.sb.auth){
           window.sb.auth.signOut().finally(function(){ showLogin(); });
@@ -609,7 +617,12 @@ function enterApp(){
     var s = res && res.data && res.data.session;
     if (s && s.user){
       currentUser = userFromAuth(s.user);
-      unlockAndHome();
+      // 恢复会话时：若上次登录用的是默认密码且尚未修改，继续强制改密
+      if (localStorage.getItem(MUST_CHANGE_KEY) === "1"){
+        showChangePassword(true);
+      } else {
+        unlockAndHome();
+      }
     } else {
       showLogin();
     }
@@ -679,7 +692,7 @@ function attemptLogin(xh, pwd){
         return;
       }
       if(!res.data || !res.data.user){ if(errEl) errEl.textContent = "登录失败：未返回用户信息。"; return; }
-      finishLogin(res.data.user);
+      finishLogin(res.data.user, pwd);
     })
     .catch(function(e){
       console.error("[login] signIn rejected:", e);
@@ -687,9 +700,68 @@ function attemptLogin(xh, pwd){
     });
 }
 
-function finishLogin(authUser){
+function finishLogin(authUser, password){
   currentUser = userFromAuth(authUser);
-  unlockAndHome();
+  // 首次用默认密码登录 → 标记并强制改密；改完才进首页
+  if (password && password === DEFAULT_PWD){
+    localStorage.setItem(MUST_CHANGE_KEY, "1");
+    showChangePassword(true);
+  } else {
+    localStorage.removeItem(MUST_CHANGE_KEY);
+    unlockAndHome();
+  }
+}
+
+/* ---------- 修改密码 ---------- */
+// forced=true：首次登录强制改（无取消按钮）；false：主动修改（可取消回首页）
+function showChangePassword(forced){
+  app.innerHTML =
+    '<div class="card key-gate">'+
+      '<div class="key-icon">'+(forced?'🔐':'🔑')+'</div>'+
+      '<h2>'+(forced?'首次登录请修改密码':'修改密码')+'</h2>'+
+      '<p class="sub">'+(forced?'为保护账号安全，请先设置一个新密码再使用。初始密码已不安全。':'请输入新密码，需输入两遍以确认。')+'</p>'+
+      '<div class="login-form">'+
+        '<input type="password" id="cpNew" placeholder="新密码（至少 6 位）" autocomplete="new-password">'+
+        '<input type="password" id="cpConfirm" placeholder="确认新密码" autocomplete="new-password">'+
+        '<button class="btn" id="cpSubmit">保存新密码</button>'+
+        (forced?'':'<button class="btn ghost" id="cpCancel" style="margin-top:6px">取消</button>')+
+      '</div>'+
+      '<p id="cpErr" class="key-err"></p>'+
+    '</div>';
+  updateFoot();
+  var newI=document.getElementById("cpNew"), conI=document.getElementById("cpConfirm");
+  newI.focus();
+  var submit=function(){ doChangePassword(newI.value, conI.value, forced); };
+  document.getElementById("cpSubmit").addEventListener("click", submit);
+  var onEnter=function(e){ if(e.key==="Enter"){
+    if(e.target.id==="cpNew"){ conI.focus(); } else { e.preventDefault(); submit(); }
+  }};
+  newI.addEventListener("keydown", onEnter);
+  conI.addEventListener("keydown", onEnter);
+  var cancel=$("#cpCancel");
+  if(cancel) cancel.addEventListener("click", function(){ home(); });
+}
+
+function doChangePassword(newPwd, confirmPwd, forced){
+  newPwd=String(newPwd==null?"":newPwd); confirmPwd=String(confirmPwd==null?"":confirmPwd);
+  var errEl=document.getElementById("cpErr");
+  if(newPwd.length<6){ if(errEl) errEl.textContent="新密码至少 6 位。"; return; }
+  if(newPwd!==confirmPwd){ if(errEl) errEl.textContent="两次输入的新密码不一致。"; return; }
+  if(newPwd===DEFAULT_PWD){ if(errEl) errEl.textContent="新密码不能与初始密码相同。"; return; }
+  if(errEl) errEl.textContent="保存中…";
+  window.sb.auth.updateUser({ password: newPwd }).then(function(res){
+    var err=res && res.error;
+    if(err){ if(errEl) errEl.textContent="修改失败："+(err.message||"未知错误"); return; }
+    localStorage.removeItem(MUST_CHANGE_KEY); // 改密完成，清除待办
+    if(forced){
+      toast("密码已修改，正在进入…");
+      unlockAndHome();
+    } else {
+      toast("密码已修改。");
+    }
+  }).catch(function(e){
+    if(errEl) errEl.textContent="修改失败："+(e && e.message ? e.message : e);
+  });
 }
 
 /* ---------- 进度同步 ---------- */

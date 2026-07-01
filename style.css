@@ -307,8 +307,9 @@ main::before{
 .key-gate .login-form input{padding:9px 11px;font-size:13px;font-family:var(--mono);border:1.5px solid var(--ink);background:var(--paper);border-radius:0}
 .key-gate .login-form input:focus{outline:none;border-color:var(--red)}
 .key-gate .login-form .btn{margin-top:4px}
-.home-hero .user-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.home-hero .user-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap}
 .home-hero .user-chip{font-size:13px;color:var(--ink-soft);font-weight:600}
+.home-hero .user-actions{display:flex;gap:6px;flex-wrap:wrap}
 
 /* ==================== 完成页 / 印章 ==================== */
 .done-card{text-align:center;padding:30px 20px}
