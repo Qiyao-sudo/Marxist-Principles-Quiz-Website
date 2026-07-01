@@ -291,6 +291,30 @@ function renderQuestion(){
   var chosenMulti={};
   var submitted=false;
 
+  // 复用渲染：把已经做过的题还原成"已判分"状态（仅查看，不允许改）
+  var prev=STATE.answered[q.id];
+  if(prev){
+    submitted=true;                                   // 拦截所有选项点击 / 提交
+    var correctSet={}; q.answer.split("").forEach(function(c){correctSet[c]=true;});
+    var chosenSet={}; prev.chosen.split("").forEach(function(c){chosenSet[c]=true;});
+    $$(".opt").forEach(function(o){
+      o.classList.add("disabled");
+      var k=o.dataset.k;
+      if(correctSet[k]) o.classList.add("correct");
+      else if(chosenSet[k]){ o.classList.add("chosen"); o.classList.add("wrong"); }
+    });
+    var sb0=$("#submitBtn"); if(sb0) sb0.style.display="none";
+    var fb0=$("#feedback");
+    var ok0=prev.correct;
+    fb0.className="feedback show "+(ok0?"ok":"bad");
+    fb0.innerHTML =
+      '<span class="review-tag">已作答（只读）</span>'+
+      (ok0?"<b>★ 当时回答正确</b>":"<b>✕ 当时回答错误</b>")+
+      '<div class="ans">正确答案：<b>'+q.answer.split("").join("")+'</b>'+
+      (ok0?"":"　你的选择："+(prev.chosen||"（未选）"))+'</div>'+
+      (q.explanation?'<div class="exp">解析：'+escapeHtml(q.explanation)+'</div>':'');
+  }
+
   $$(".opt").forEach(function(o){
     o.addEventListener("click",function(){
       if(submitted) return;

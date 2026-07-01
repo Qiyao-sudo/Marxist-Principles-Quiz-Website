@@ -219,6 +219,7 @@ main::before{
 .feedback .ans{margin-top:6px;color:var(--ink);font-family:var(--mono);font-size:13px}
 .feedback .ans b{display:inline;color:var(--red);font-family:var(--sans);font-size:14px}
 .feedback .exp{margin-top:8px;color:var(--ink-soft);font-family:var(--sans);line-height:1.6;padding-top:8px;border-top:1px dashed var(--rule)}
+.feedback .review-tag{float:right;background:var(--bg);color:var(--ink-soft);font-size:12px;padding:2px 8px;border-radius:10px;border:1px solid var(--rule);font-weight:normal}
 
 /* 进度 */
 .progress-wrap{margin-bottom:16px}
