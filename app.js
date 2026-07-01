@@ -862,15 +862,27 @@ function init(){
 var REMOTE_DATA_URL = "https://quiz-1312685057.cos.ap-nanjing.myqcloud.com/data.js";
 
 function bootstrap(){
-  // index.html 已同步加载本地 data.js（兜底基线，window.QUIZ_CIPHER 已就绪）。
-  // 再注入远端 <script> 覆盖拿最新数据；失败则沿用本地。
+  // 优先远端 COS（最新题库），失败再回退本地 data.js。
   app.innerHTML = '<div class="card" style="max-width:420px;margin:60px auto;text-align:center;color:var(--ink-soft)">加载题库中…</div>';
+
+  var started=false;
+  function go(){ if(started) return; started=true; init(); }
+
+  // 兜底：注入本地 data.js
+  function loadLocal(onDone){
+    var s=document.createElement("script");
+    s.src="data.js";
+    s.onload=onDone;
+    s.onerror=function(){ if(s.parentNode) s.parentNode.removeChild(s); onDone(); };
+    document.head.appendChild(s);
+  }
+
   var s = document.createElement("script");
   s.src = REMOTE_DATA_URL;
-  s.onload = function(){ init(); };              // 远端已执行，覆盖了 window.QUIZ_CIPHER
-  s.onerror = function(){                        // 远端不可达：移除节点，沿用本地 data.js
+  s.onload = go;                                  // COS 拿到，直接进
+  s.onerror = function(){                         // COS 不可达：回退本地
     if(s.parentNode) s.parentNode.removeChild(s);
-    init();
+    loadLocal(go);
   };
   document.head.appendChild(s);
 }
