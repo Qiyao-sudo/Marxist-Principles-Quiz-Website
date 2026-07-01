@@ -292,7 +292,8 @@ function renderQuestion(){
   var submitted=false;
 
   // 复用渲染：把已经做过的题还原成"已判分"状态（仅查看，不允许改）
-  var prev=STATE.answered[q.id];
+  // 错题练习例外——允许重做，所以不锁
+  var prev=(session.mode==="wrong")?null:STATE.answered[q.id];
   if(prev){
     submitted=true;                                   // 拦截所有选项点击 / 提交
     var correctSet={}; q.answer.split("").forEach(function(c){correctSet[c]=true;});
