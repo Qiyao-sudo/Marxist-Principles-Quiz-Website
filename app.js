@@ -657,10 +657,21 @@ function attemptLogin(xh, pwd){
   if(!/^\d{6,}$/.test(xh)){ if(errEl) errEl.textContent = "学号格式不正确。"; return; }
   if(!pwd){ if(errEl) errEl.textContent = "请输入密码。"; return; }
   if(errEl) errEl.textContent = "验证中…";
-  window.sb.auth.signInWithPassword({ email: xh + "@mayuan.local", password: pwd })
-    .then(function(res){
+  var p;
+  try {
+    if(!window.sb || !window.sb.auth){
+      throw new Error("Supabase 客户端未初始化（检查 supabase.js / CDN 是否加载）。");
+    }
+    p = window.sb.auth.signInWithPassword({ email: xh + "@mayuan.local", password: pwd });
+  } catch(e){
+    console.error("[login] signInWithPassword threw:", e);
+    if(errEl) errEl.textContent = "登录异常：" + (e && e.message ? e.message : e);
+    return;
+  }
+  p.then(function(res){
       var err = res && res.error;
       if(err){
+        console.error("[login] signIn error:", err);
         var msg = err.message || "";
         if(/Invalid login credentials|invalid/i.test(msg)) msg = "学号或密码不正确。";
         else if(/not confirmed/i.test(msg)) msg = "账号未确认，请联系管理员。";
@@ -670,9 +681,9 @@ function attemptLogin(xh, pwd){
       if(!res.data || !res.data.user){ if(errEl) errEl.textContent = "登录失败：未返回用户信息。"; return; }
       finishLogin(res.data.user);
     })
-    .catch(function(){
-      // 离线/Supabase 不可达：密钥现托管在库中，未登录无法解锁，提示重试
-      if(errEl) errEl.textContent = "无法连接服务器，请检查网络后重试。";
+    .catch(function(e){
+      console.error("[login] signIn rejected:", e);
+      if(errEl) errEl.textContent = "无法连接服务器，请检查网络后重试。" + (e && e.message ? "（" + e.message + "）" : "");
     });
 }
 

@@ -3,3 +3,4 @@ _dump/
 *.key
 user
 supabase_setup.sql
+USERCONFIG.md
