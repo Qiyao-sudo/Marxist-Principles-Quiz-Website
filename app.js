@@ -13,12 +13,15 @@ function setQuestions(arr){
 
 var STORAGE_KEY = "mayuan_quiz_v1";
 
-/* ---------- 登录 / Supabase 进度同步 ---------- */
-var USER_STORAGE = "mayuan_user_v1"; // localStorage：当前登录学号（跨浏览器重启保留，退出登录时清除）
-var currentUser = null;              // { xh, name } 或 null
+/* ---------- 登录 / Supabase 进度同步 ----------
+   认证用 Supabase Auth：每个学生一个账号（email = 学号@mayuan.local）。
+   会话由 supabase-js 持久化（localStorage），浏览器重启自动恢复，无需重登。
+   进度表 progress(user_id) 由 RLS 绑定 auth.uid()，每账号只能读写自己的行。
+*/
+var currentUser = null;              // { id, xh, name } 或 null（id=auth.users 的 uuid）
 
-/* ---------- 题库解密（AES-256-GCM，密钥来自 .key 文件） ---------- */
-var KEY_STORAGE = "mayuan_key_v1"; // localStorage 槽：缓存原始密钥字节（跨浏览器重启保留，免重复输入）
+/* ---------- 题库解密（AES-256-GCM，密钥托管在数据库 quiz_key 表） ---------- */
+var KEY_STORAGE = "mayuan_key_v1"; // 离线兜底缓存：在线取到密钥后存此，断网时复用；退出登录时清除
 
 function b64ToBytes(b64){
   var bin = atob(b64);
@@ -195,8 +198,15 @@ function home(){
       if(ok){
         syncProgress();                              // 先把当前进度上传云端
         STATE=defaultState(); saveState();           // 再清除本机数据
-        currentUser=null; localStorage.removeItem(USER_STORAGE);
-        showLogin();
+        var prevId = currentUser && currentUser.id;
+        currentUser=null;
+        localStorage.removeItem(KEY_STORAGE);        // 清除离线密钥缓存，下次登录重新从库取
+        // 注销 Auth 会话（清除本地持久化的 token）；离线无会话则直接回登录页
+        if(prevId && window.sb && window.sb.auth){
+          window.sb.auth.signOut().finally(function(){ showLogin(); });
+        } else {
+          showLogin();
+        }
       }
     });
   });
@@ -529,91 +539,90 @@ function updateFoot(){
 function $(s){ return app.querySelector(s) || document.querySelector(s); }
 function $$(s){ return Array.prototype.slice.call(app.querySelectorAll(s)); }
 
-/* ---------- 启动：密钥门控 ---------- */
-function showKeyGate(msg){
+/* ---------- 题库解锁：密钥存数据库，登录后自动取 ---------- */
+// KEY_STORAGE 现在仅作"离线兜底缓存"：首次在线取到密钥后缓存，断网时复用，退出登录时清除。
+function showUnlockError(msg){
   app.innerHTML =
     '<div class="card key-gate">'+
-      '<div class="key-icon">🔑</div>'+
-      '<h2>需要密钥</h2>'+
-      '<p class="sub">'+escapeHtml(msg||'本题库已加密。请选择 mayuan.key 文件，或直接粘贴密钥以解锁。')+'</p>'+
-      '<input type="file" id="keyInput" accept=".key" class="key-file">'+
-      '<div class="key-divider">— 或粘贴密钥 —</div>'+
-      '<div class="key-paste">'+
-        '<input type="text" id="keyText" placeholder="粘贴 base64 密钥…" autocomplete="off" spellcheck="false">'+
-        '<button class="btn" id="keyUnlock">解锁</button>'+
-      '</div>'+
-      '<p id="keyErr" class="key-err"></p>'+
-      '<p class="sub" style="font-size:12px;margin-top:14px">提示：请通过 https 或 localhost 访问；密钥请妥善保管，勿上传分享。</p>'+
+      '<div class="key-icon">🔒</div>'+
+      '<h2>无法解锁题库</h2>'+
+      '<p class="sub">'+escapeHtml(msg||'无法从服务器读取题库密钥，请检查网络后刷新重试。')+'</p>'+
+      '<p class="sub" style="font-size:12px;margin-top:14px">密钥已托管在数据库，登录后自动解锁，无需手动输入。</p>'+
+      '<div style="margin-top:14px"><button class="btn" id="retryUnlockBtn">重试</button>'+
+      '<button class="btn ghost" id="backLoginBtn" style="margin-left:8px">重新登录</button></div>'+
     '</div>';
   updateFoot();
-  document.getElementById("keyInput").addEventListener("change", onKeyPicked);
-  var txt = document.getElementById("keyText");
-  var unlock = function(){ tryUnlock(txt.value).then(function(ok){ if(!ok) txt.select(); }); };
-  document.getElementById("keyUnlock").addEventListener("click", unlock);
-  txt.addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); unlock(); } });
-  txt.focus();
+  var r=$("#retryUnlockBtn"); if(r) r.addEventListener("click", function(){ fetchKeyAndUnlock(); });
+  var b=$("#backLoginBtn"); if(b) b.addEventListener("click", function(){
+    currentUser=null;
+    if(window.sb && window.sb.auth){ window.sb.auth.signOut().finally(showLogin); } else { showLogin(); }
+  });
 }
 
-// 用一段 base64 密钥尝试解密并进入首页；成功 resolve(true)，失败 resolve(false) 并在 #keyErr 报错
-function tryUnlock(rawB64){
-  var errEl = document.getElementById("keyErr");
-  if (errEl) errEl.textContent = "正在验证…";
+// 用 base64 密钥解密题库并装入；成功 resolve(true)，失败 reject
+function unlockWithKey(rawB64){
   var trimmed = String(rawB64==null?"":rawB64).trim();
-  var rawBytes;
-  try {
-    rawBytes = b64ToBytes(trimmed);
-    if (rawBytes.length !== 32) throw new Error("密钥长度不对（需要 32 字节）。");
-  } catch (err){
-    if (errEl) errEl.textContent = "密钥无效：" + (err && err.message ? err.message : err);
-    return Promise.resolve(false);
-  }
+  var rawBytes = b64ToBytes(trimmed);
+  if (rawBytes.length !== 32) throw new Error("密钥长度不对（需要 32 字节）。");
   return importKeyFromBytes(rawBytes)
     .then(function(keyObj){ return decryptQuestions(keyObj); })
     .then(function(questions){
-      localStorage.setItem(KEY_STORAGE, trimmed); // 缓存密钥，浏览器重启免重输
+      localStorage.setItem(KEY_STORAGE, trimmed); // 离线兜底缓存
       setQuestions(questions);
-      enterApp();
       return true;
-    })
-    .catch(function(err){
-      if (errEl) errEl.textContent = "解密失败：密钥可能不正确。" + (err && err.message ? "（" + err.message + "）" : "");
-      return false;
     });
 }
 
-function onKeyPicked(e){
-  var file = e.target.files && e.target.files[0];
-  if (!file) return;
-  var input = e.target;
-  var errEl = document.getElementById("keyErr");
-  if (errEl) errEl.textContent = "正在验证…";
-  var reader = new FileReader();
-  reader.onload = function(){ tryUnlock(reader.result).then(function(ok){ if(!ok) input.value=""; }); };
-  reader.onerror = function(){ if (errEl) errEl.textContent = "读取文件失败。"; };
-  reader.readAsText(file); // .key 是 base64 文本
+// 登录后调用：从数据库取密钥 → 解锁 → 进首页。失败则尝试离线缓存，仍失败显示错误页。
+function fetchKeyAndUnlock(){
+  return window.sb.from("quiz_key").select("key").eq("id", 1).limit(1)
+    .then(function(res){
+      if(res && res.data && res.data.length && res.data[0].key){
+        return unlockWithKey(res.data[0].key);
+      }
+      // 拿不到（RLS 拒绝 / 表空）→ 退回缓存
+      var cached = localStorage.getItem(KEY_STORAGE);
+      if (cached) return unlockWithKey(cached);
+      throw new Error("未取到题库密钥。");
+    })
+    .catch(function(err){
+      // 网络/RLS 错误：尝试离线缓存，否则报错
+      var cached = localStorage.getItem(KEY_STORAGE);
+      if (cached){
+        return unlockWithKey(cached).catch(function(){ showUnlockError(err && err.message); throw err; });
+      }
+      showUnlockError(err && err.message);
+      throw err;
+    });
 }
 
 /* ---------- 登录门控：解密成功后、进首页前 ---------- */
-// 每次进入页面：从数据库同步姓名 + 进度（合并）。任一失败均不阻塞进首页。
-function syncFromDB(xh){
-  var nameP = window.sb.from("students").select("name").eq("xh", xh).limit(1)
-    .then(function(res){
-      if(currentUser && currentUser.xh===xh && res && res.data && res.data.length && res.data[0].name){
-        currentUser.name = res.data[0].name; // 刷新后回填姓名
-      }
-    })
-    .catch(function(){ /* 离线：保留缓存 */ });
-  return Promise.all([nameP, loadAndMergeRemoteProgress(xh)]);
+// 把 auth.users 行映射为 currentUser（id=uuid, xh/name 取自 user_metadata）
+function userFromAuth(u){
+  var m = (u && u.user_metadata) || {};
+  return { id: u.id, xh: m.xh || "", name: m.name || "" };
 }
 
+// 每次进入页面：尝试恢复会话；有会话则取密钥解锁 + 拉本人进度（合并），进首页。
 function enterApp(){
-  var cached = localStorage.getItem(USER_STORAGE);
-  if (cached){
-    currentUser = { xh: cached, name: "" };
-    syncFromDB(cached).then(home).catch(function(){ home(); });
-    return;
-  }
-  showLogin();
+  window.sb.auth.getSession().then(function(res){
+    var s = res && res.data && res.data.session;
+    if (s && s.user){
+      currentUser = userFromAuth(s.user);
+      unlockAndHome();
+    } else {
+      showLogin();
+    }
+  }).catch(function(){ showLogin(); });
+}
+
+// 解锁题库 + 合并远程进度 + 进首页（登录/恢复会话后统一入口）
+function unlockAndHome(){
+  app.innerHTML = '<div class="card" style="max-width:420px;margin:60px auto;text-align:center;color:var(--ink-soft)">正在解锁题库…</div>';
+  fetchKeyAndUnlock()
+    .then(function(){ return loadAndMergeRemoteProgress(currentUser.id); })
+    .then(function(){ home(); })
+    .catch(function(){ /* fetchKeyAndUnlock 已展示错误页 */ });
 }
 
 function showLogin(errMsg){
@@ -621,9 +630,10 @@ function showLogin(errMsg){
     '<div class="card key-gate">'+
       '<div class="key-icon">👤</div>'+
       '<h2>登录</h2>'+
-      '<p class="sub">请输入学号，登录后可同步答题进度。</p>'+
-      '<div class="key-paste">'+
-        '<input type="text" id="loginXh" placeholder="学号" autocomplete="off" inputmode="numeric" spellcheck="false">'+
+      '<p class="sub">请输入学号与密码。首次登录使用统一初始密码，登录后请尽快修改。</p>'+
+      '<div class="login-form">'+
+        '<input type="text" id="loginXh" placeholder="学号" autocomplete="username" inputmode="numeric" spellcheck="false">'+
+        '<input type="password" id="loginPwd" placeholder="密码" autocomplete="current-password">'+
         '<button class="btn" id="loginGo">登录</button>'+
       '</div>'+
       '<p id="loginErr" class="key-err"></p>'+
@@ -631,34 +641,44 @@ function showLogin(errMsg){
   updateFoot();
   if (errMsg){ document.getElementById("loginErr").textContent = errMsg; }
   var xhInput = document.getElementById("loginXh");
+  var pwdInput = document.getElementById("loginPwd");
   xhInput.focus();
-  var go = function(){ attemptLogin(xhInput.value); };
+  var go = function(){ attemptLogin(xhInput.value, pwdInput.value); };
   document.getElementById("loginGo").addEventListener("click", go);
-  xhInput.addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); go(); } });
+  var onEnter = function(e){ if(e.key==="Enter"){ e.preventDefault(); go(); } };
+  xhInput.addEventListener("keydown", onEnter);
+  pwdInput.addEventListener("keydown", onEnter);
 }
 
-function attemptLogin(xh){
+function attemptLogin(xh, pwd){
   xh = String(xh==null?"":xh).trim();
+  pwd = String(pwd==null?"":pwd);
   var errEl = document.getElementById("loginErr");
   if(!/^\d{6,}$/.test(xh)){ if(errEl) errEl.textContent = "学号格式不正确。"; return; }
+  if(!pwd){ if(errEl) errEl.textContent = "请输入密码。"; return; }
   if(errEl) errEl.textContent = "验证中…";
-  window.sb.from("students").select("xh,name").eq("xh", xh).limit(1)
+  window.sb.auth.signInWithPassword({ email: xh + "@mayuan.local", password: pwd })
     .then(function(res){
-      if(res.error){ if(errEl) errEl.textContent = "网络错误：" + res.error.message; return; }
-      if(!res.data || !res.data.length){ if(errEl) errEl.textContent = "学号未注册，请检查后重试。"; return; }
-      finishLogin({ xh: xh, name: res.data[0].name || "" });
+      var err = res && res.error;
+      if(err){
+        var msg = err.message || "";
+        if(/Invalid login credentials|invalid/i.test(msg)) msg = "学号或密码不正确。";
+        else if(/not confirmed/i.test(msg)) msg = "账号未确认，请联系管理员。";
+        if(errEl) errEl.textContent = "登录失败：" + msg;
+        return;
+      }
+      if(!res.data || !res.data.user){ if(errEl) errEl.textContent = "登录失败：未返回用户信息。"; return; }
+      finishLogin(res.data.user);
     })
     .catch(function(){
-      // 离线/Supabase 不可达：降级进入（离线模式，本次不同步）
-      if(errEl) errEl.textContent = "无法连接服务器，已进入离线模式（本次不同步进度）。";
-      finishLogin({ xh: xh, name: "" });
+      // 离线/Supabase 不可达：密钥现托管在库中，未登录无法解锁，提示重试
+      if(errEl) errEl.textContent = "无法连接服务器，请检查网络后重试。";
     });
 }
 
-function finishLogin(user){
-  currentUser = user;
-  localStorage.setItem(USER_STORAGE, user.xh);
-  syncFromDB(user.xh).then(home).catch(function(){ home(); });
+function finishLogin(authUser){
+  currentUser = userFromAuth(authUser);
+  unlockAndHome();
 }
 
 /* ---------- 进度同步 ---------- */
@@ -685,8 +705,9 @@ function mergeStates(local, remote){
   return out;
 }
 
-function loadAndMergeRemoteProgress(xh){
-  return window.sb.from("progress").select("state").eq("xh", xh).limit(1)
+function loadAndMergeRemoteProgress(userId){
+  if(!userId) return Promise.resolve();
+  return window.sb.from("progress").select("state").eq("user_id", userId).limit(1)
     .then(function(res){
       if(res.error || !res.data || !res.data.length) return;
       var remote = res.data[0].state;
@@ -698,8 +719,11 @@ function loadAndMergeRemoteProgress(xh){
 }
 
 function syncProgress(){
-  if(!currentUser || !currentUser.xh) return;
-  window.sb.from("progress").upsert({ xh: currentUser.xh, state: STATE }, { onConflict: "xh" })
+  if(!currentUser || !currentUser.id) return;
+  window.sb.from("progress").upsert(
+    { user_id: currentUser.id, xh: currentUser.xh || null, state: STATE },
+    { onConflict: "user_id" }
+  )
     .then(function(){ /* ok */ })
     .catch(function(){ /* 静默；离线时下次退出会重试 */ });
 }
@@ -722,19 +746,8 @@ function init(){
     updateFoot();
     return;
   }
-  // 浏览器重启/刷新：用缓存的密钥字节静默解锁
-  var cached = localStorage.getItem(KEY_STORAGE);
-  if (cached){
-    importKeyFromBytes(b64ToBytes(cached))
-      .then(function(keyObj){ return decryptQuestions(keyObj); })
-      .then(function(questions){ setQuestions(questions); enterApp(); })
-      .catch(function(){
-        localStorage.removeItem(KEY_STORAGE);
-        showKeyGate("缓存的密钥已失效，请重新选择 mayuan.key。");
-      });
-    return;
-  }
-  showKeyGate();
+  // 密钥现托管在数据库：直接进入登录门控，登录后自动取密钥解锁
+  enterApp();
 }
 
 /* ---------- 数据加载：优先远端存储桶，失败回退本地 data.js ---------- */

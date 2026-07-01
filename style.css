@@ -303,6 +303,10 @@ main::before{
 .key-gate .key-paste input[type=text]:focus{outline:none;border-color:var(--red)}
 .key-gate .key-err{color:var(--red);min-height:20px;font-size:13px;margin:4px 0 0;font-weight:600}
 .key-gate code{font-family:var(--mono);background:var(--paper);padding:1px 5px;border:1px solid var(--rule)}
+.key-gate .login-form{display:flex;flex-direction:column;gap:8px;max-width:280px;margin:14px auto 0}
+.key-gate .login-form input{padding:9px 11px;font-size:13px;font-family:var(--mono);border:1.5px solid var(--ink);background:var(--paper);border-radius:0}
+.key-gate .login-form input:focus{outline:none;border-color:var(--red)}
+.key-gate .login-form .btn{margin-top:4px}
 .home-hero .user-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
 .home-hero .user-chip{font-size:13px;color:var(--ink-soft);font-weight:600}
 
