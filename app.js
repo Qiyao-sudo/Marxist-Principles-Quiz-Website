@@ -19,6 +19,7 @@ var STORAGE_KEY = "mayuan_quiz_v1";
    进度表 progress(user_id) 由 RLS 绑定 auth.uid()，每账号只能读写自己的行。
 */
 var currentUser = null;              // { id, xh, name } 或 null（id=auth.users 的 uuid）
+var isAdmin = false;                 // 是否为管理员（登录后查 public.admins 表确定）
 var DEFAULT_PWD = "Marx2026";        // 统一初始口令；用此口令登录强制改密
 var MUST_CHANGE_KEY = "mayuan_must_change_pwd"; // localStorage：首次登录未改密的待办标志
 
@@ -165,6 +166,7 @@ function home(){
       '<div class="user-bar">'+
         '<span class="user-chip">👤 '+(currentUser&&currentUser.name?escapeHtml(currentUser.name):escapeHtml(currentUser?currentUser.xh||'':''))+(currentUser&&currentUser.xh&&!currentUser.name?' · '+escapeHtml(currentUser.xh):'')+'</span>'+
         '<span class="user-actions">'+
+          (isAdmin?'<button class="btn ghost small" id="adminBtn">管理</button>':'')+
           '<button class="btn ghost small" id="changePwdBtn">修改密码</button>'+
           '<button class="btn ghost small" id="logoutBtn">退出登录</button>'+
         '</span>'+
@@ -197,6 +199,8 @@ function home(){
     '</div>';
 
   // 绑定
+  var ap=$("#adminBtn");
+  if(ap) ap.addEventListener("click", function(){ location.hash="admin"; });
   var cp=$("#changePwdBtn");
   if(cp) cp.addEventListener("click", function(){ showChangePassword(false); });
   var lb=$("#logoutBtn");
@@ -207,6 +211,7 @@ function home(){
         STATE=defaultState(); saveState();           // 再清除本机数据
         var prevId = currentUser && currentUser.id;
         currentUser=null;
+        isAdmin=false;
         localStorage.removeItem(KEY_STORAGE);        // 清除离线密钥缓存，下次登录重新从库取
         localStorage.removeItem(MUST_CHANGE_KEY);    // 清除改密待办（退出即丢弃会话）
         // 注销 Auth 会话（清除本地持久化的 token）；离线无会话则直接回登录页
@@ -229,6 +234,7 @@ function home(){
     });
   });
   updateFoot();
+  if (location.hash === "#admin" && isAdmin) showAdmin();
 }
 
 function modeBtn(num,t,d,badge,mode){
@@ -659,8 +665,17 @@ function unlockAndHome(){
   app.innerHTML = '<div class="card" style="max-width:420px;margin:60px auto;text-align:center;color:var(--ink-soft)">正在解锁题库…</div>';
   fetchKeyAndUnlock()
     .then(function(){ return loadAndMergeRemoteProgress(currentUser.id); })
+    .then(function(){ return loadAdminFlag(); })
     .then(function(){ home(); })
     .catch(function(){ /* fetchKeyAndUnlock 已展示错误页 */ });
+}
+
+// 查 admins 表确定当前用户是否为管理员（RLS 仅放行本人那一行）
+function loadAdminFlag(){
+  if(!currentUser || !currentUser.id){ isAdmin=false; return Promise.resolve(); }
+  return window.sb.from("admins").select("admin_id").eq("admin_id", currentUser.id).limit(1)
+    .then(function(res){ isAdmin = !!(res && res.data && res.data.length); })
+    .catch(function(){ isAdmin = false; });
 }
 
 function showLogin(errMsg){
@@ -789,6 +804,169 @@ function doChangePassword(newPwd, confirmPwd, forced){
   });
 }
 
+/* ---------- 管理端：查看全班答题情况 ---------- */
+var ADMIN_ROWS = []; // 上次拉取的统计行，供 CSV 导出复用
+
+function fmtDate(iso){
+  if(!iso) return "—";
+  var d=new Date(iso);
+  if(isNaN(d.getTime())) return String(iso);
+  function p(n){ return (n<10?"0":"")+n; }
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
+}
+
+function computeStats(state){
+  state = (state && typeof state==="object") ? state : {};
+  var answered = state.answered || {};
+  var wrongSet = state.wrongSet || {};
+  var ids = Object.keys(answered);
+  var correct = 0;
+  ids.forEach(function(id){ if(answered[id] && answered[id].correct) correct++; });
+  var answered_n = ids.length;
+  var wrong_n = Object.keys(wrongSet).length;
+  var rate = answered_n ? Math.round(correct/answered_n*100) : 0;
+  return { answered:answered_n, correct:correct, rate:rate, wrong:wrong_n };
+}
+
+function showAdmin(){
+  app.innerHTML =
+    '<div class="card home-hero">'+
+      '<div class="user-bar">'+
+        '<span class="user-chip">★ 管理端 · '+escapeHtml(currentUser&&currentUser.name?currentUser.name:(currentUser?currentUser.xh:''))+'</span>'+
+        '<span class="user-actions">'+
+          '<button class="btn ghost small" id="adminHomeBtn">返回首页</button>'+
+        '</span>'+
+      '</div>'+
+      '<span class="eyebrow">管理 · 全班答题情况</span>'+
+      '<h1>答题进度总览</h1>'+
+      '<div class="stats" id="adminSummary">'+
+        '<div class="stat"><div class="num">—</div><div class="lbl">有进度人数</div></div>'+
+        '<div class="stat ok"><div class="num">—</div><div class="lbl">平均正确率</div></div>'+
+        '<div class="stat"><div class="num">—</div><div class="lbl">总答题数</div></div>'+
+        '<div class="stat warn"><div class="num">—</div><div class="lbl">总错题数</div></div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="card">'+
+      '<div class="program-head"><h3>学生明细</h3>'+
+        '<span class="user-actions">'+
+          '<button class="btn ghost small" id="adminRefreshBtn">刷新</button>'+
+          '<button class="btn small" id="adminCsvBtn">导出 CSV</button>'+
+        '</span>'+
+      '</div>'+
+      '<p class="sub" id="adminNote" style="color:var(--ink-soft);font-size:13px;margin:6px 0 0">加载中…</p>'+
+      '<div class="admin-table-wrap" style="overflow-x:auto;margin-top:10px">'+
+        '<table class="admin-table" style="width:100%;border-collapse:collapse;font-size:14px">'+
+          '<thead><tr>'+
+            '<th style="text-align:left;padding:8px;border-bottom:1px solid var(--ink-soft,#ccc)">学号</th>'+
+            '<th style="text-align:left;padding:8px;border-bottom:1px solid var(--ink-soft,#ccc)">姓名</th>'+
+            '<th style="text-align:right;padding:8px;border-bottom:1px solid var(--ink-soft,#ccc)">已答</th>'+
+            '<th style="text-align:right;padding:8px;border-bottom:1px solid var(--ink-soft,#ccc)">正确</th>'+
+            '<th style="text-align:right;padding:8px;border-bottom:1px solid var(--ink-soft,#ccc)">正确率</th>'+
+            '<th style="text-align:right;padding:8px;border-bottom:1px solid var(--ink-soft,#ccc)">错题</th>'+
+            '<th style="text-align:left;padding:8px;border-bottom:1px solid var(--ink-soft,#ccc)">最后更新</th>'+
+          '</tr></thead>'+
+          '<tbody id="adminTbody"><tr><td colspan="7" style="padding:14px;color:var(--ink-soft)">加载中…</td></tr></tbody>'+
+        '</table>'+
+      '</div>'+
+    '</div>';
+  session=null;
+  updateFoot();
+
+  $("#adminHomeBtn").addEventListener("click", function(){
+    location.hash=""; home();
+  });
+  $("#adminRefreshBtn").addEventListener("click", loadAdminData);
+  $("#adminCsvBtn").addEventListener("click", function(){ exportAdminCsv(ADMIN_ROWS); });
+  loadAdminData();
+}
+
+function loadAdminData(){
+  var note=$("#adminNote"); if(note) note.textContent="加载中…";
+  window.sb.from("progress").select("xh,name,state,updated_at").order("updated_at",{ascending:false})
+    .then(function(res){
+      if(res.error){ if(note) note.textContent="读取失败："+(res.error.message||res.error); return; }
+      var rows=(res.data||[]).map(function(r){
+        var s=computeStats(r.state);
+        return { xh:r.xh||"", name:r.name||"", answered:s.answered, correct:s.correct, rate:s.rate, wrong:s.wrong, updated:r.updated_at||"" };
+      });
+      ADMIN_ROWS=rows;
+      renderAdminRows(rows);
+      renderAdminSummary(rows);
+      if(note) note.textContent="共 "+rows.length+" 条记录（按最后更新倒序）";
+    })
+    .catch(function(e){ if(note) note.textContent="读取失败："+(e&&e.message?e.message:e); });
+}
+
+function renderAdminRows(rows){
+  var tbody=$("#adminTbody"); if(!tbody) return;
+  if(!rows.length){
+    tbody.innerHTML='<tr><td colspan="7" style="padding:14px;color:var(--ink-soft)">暂无记录</td></tr>';
+    return;
+  }
+  tbody.innerHTML=rows.map(function(r){
+    var rateCls = r.rate>=80 ? "ok" : (r.rate>=60 ? "" : "bad");
+    return '<tr>'+
+      '<td style="padding:8px;border-bottom:1px solid #eee">'+escapeHtml(r.xh)+'</td>'+
+      '<td style="padding:8px;border-bottom:1px solid #eee">'+escapeHtml(r.name||"—")+'</td>'+
+      '<td style="padding:8px;border-bottom:1px solid #eee;text-align:right">'+r.answered+'</td>'+
+      '<td style="padding:8px;border-bottom:1px solid #eee;text-align:right">'+r.correct+'</td>'+
+      '<td style="padding:8px;border-bottom:1px solid #eee;text-align:right" class="'+rateCls+'"><b>'+r.rate+'%</b></td>'+
+      '<td style="padding:8px;border-bottom:1px solid #eee;text-align:right">'+r.wrong+'</td>'+
+      '<td style="padding:8px;border-bottom:1px solid #eee;color:var(--ink-soft)">'+escapeHtml(fmtDate(r.updated))+'</td>'+
+    '</tr>';
+  }).join("");
+}
+
+function renderAdminSummary(rows){
+  var sum=$("#adminSummary"); if(!sum) return;
+  var n=rows.length;
+  var totalAnswered=0, totalCorrect=0, totalWrong=0, rateSum=0, rateN=0;
+  rows.forEach(function(r){
+    totalAnswered+=r.answered;
+    totalCorrect+=r.correct;
+    totalWrong+=r.wrong;
+    if(r.answered>0){ rateSum+=r.rate; rateN++; }
+  });
+  var avgRate = rateN ? Math.round(rateSum/rateN) : 0;
+  var stats=sum.querySelectorAll(".stat");
+  if(stats[0]) stats[0].querySelector(".num").textContent=n;
+  if(stats[1]) stats[1].querySelector(".num").textContent=avgRate+"%";
+  if(stats[2]) stats[2].querySelector(".num").textContent=totalAnswered;
+  if(stats[3]) stats[3].querySelector(".num").textContent=totalWrong;
+}
+
+function csvCell(v){
+  v = (v==null?"":String(v));
+  return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
+}
+
+function exportAdminCsv(rows){
+  if(!rows || !rows.length){ toast("暂无可导出的数据。"); return; }
+  var head=["学号","姓名","已答题数","正确数","正确率(%)","错题数","最后更新"];
+  var lines=[head.join(",")];
+  rows.forEach(function(r){
+    lines.push([r.xh, r.name, r.answered, r.correct, r.rate, r.wrong, fmtDate(r.updated)].map(csvCell).join(","));
+  });
+  var blob=new Blob(["﻿"+lines.join("\n")], {type:"text/csv;charset=utf-8"});
+  var a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="马原答题情况.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
+}
+
+/* hash 路由：#admin 仅管理员可进 */
+function routeByHash(){
+  if(location.hash==="#admin"){
+    if(currentUser && isAdmin){ showAdmin(); }
+    else if(currentUser){ location.hash=""; }
+    else { showLogin(); }
+  }
+}
+window.addEventListener("hashchange", routeByHash);
+
 /* ---------- 进度同步 ---------- */
 // 把远程进度合并进本地 STATE（answered 按 t 取新、wrongSet 并集、seqCursor 取大、shuf 保留本地）
 function mergeStates(local, remote){
@@ -829,7 +1007,7 @@ function loadAndMergeRemoteProgress(userId){
 function syncProgress(){
   if(!currentUser || !currentUser.id) return;
   window.sb.from("progress").upsert(
-    { user_id: currentUser.id, xh: currentUser.xh || null, state: STATE },
+    { user_id: currentUser.id, xh: currentUser.xh || null, name: currentUser.name || null, state: STATE },
     { onConflict: "user_id" }
   )
     .then(function(){ /* ok */ })

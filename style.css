@@ -338,3 +338,13 @@ main::before{
   *{transition:none !important;animation:none !important}
 }
 :focus-visible{outline:3px solid var(--red);outline-offset:2px}
+
+/* ---------- 管理端表格 ---------- */
+.admin-table th{ background:var(--paper-deep); }
+.admin-table tbody tr:hover{ background:var(--paper); }
+.admin-table td.ok{ color:var(--red-deep); }
+.admin-table td.bad{ color:var(--grey); }
+@media (max-width:560px){
+  .admin-table{ font-size:12px !important; }
+  .admin-table th,.admin-table td{ padding:6px 4px !important; }
+}
